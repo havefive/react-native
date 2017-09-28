@@ -1,4 +1,4 @@
-  /**
+/**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
@@ -9,43 +9,47 @@
 
 package com.facebook.react.uimanager;
 
-import javax.annotation.Nullable;
+import static com.facebook.react.bridge.ReactMarkerConstants.CREATE_UI_MANAGER_MODULE_CONSTANTS_END;
+import static com.facebook.react.bridge.ReactMarkerConstants.CREATE_UI_MANAGER_MODULE_CONSTANTS_START;
 
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-
-import android.util.DisplayMetrics;
-
-import com.facebook.csslayout.CSSLayoutContext;
-import com.facebook.infer.annotation.Assertions;
+import android.content.ComponentCallbacks2;
+import android.content.res.Configuration;
+import com.facebook.common.logging.FLog;
+import com.facebook.debug.holder.PrinterHolder;
+import com.facebook.debug.tags.ReactDebugOverlayTags;
 import com.facebook.react.animation.Animation;
-import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.Callback;
+import com.facebook.react.bridge.GuardedRunnable;
 import com.facebook.react.bridge.LifecycleEventListener;
 import com.facebook.react.bridge.OnBatchCompleteListener;
+import com.facebook.react.bridge.PerformanceCounter;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
+import com.facebook.react.bridge.ReactMarker;
 import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.ReadableArray;
 import com.facebook.react.bridge.ReadableMap;
-import com.facebook.react.bridge.WritableArray;
+import com.facebook.react.common.ReactConstants;
+import com.facebook.react.module.annotations.ReactModule;
 import com.facebook.react.uimanager.debug.NotThreadSafeViewHierarchyUpdateDebugListener;
 import com.facebook.react.uimanager.events.EventDispatcher;
 import com.facebook.systrace.Systrace;
 import com.facebook.systrace.SystraceMessage;
+import java.util.List;
+import java.util.Map;
+import javax.annotation.Nullable;
 
-/**
+  /**
  * <p>Native module to allow JS to create and update native Views.</p>
  *
  * <p>
  * <h2>== Transactional Requirement ==</h2>
- * A requirement of this class is to make sure that transactional UI updates occur all at once, meaning
- * that no intermediate state is ever rendered to the screen. For example, if a JS application
- * update changes the background of View A to blue and the width of View B to 100, both need to
- * appear at once. Practically, this means that all UI update code related to a single transaction
- * must be executed as a single code block on the UI thread. Executing as multiple code blocks
- * could allow the platform UI system to interrupt and render a partial UI state.
+ * A requirement of this class is to make sure that transactional UI updates occur all at once,
+ * meaning that no intermediate state is ever rendered to the screen. For example, if a JS
+ * application update changes the background of View A to blue and the width of View B to 100, both
+ * need to appear at once. Practically, this means that all UI update code related to a single
+ * transaction must be executed as a single code block on the UI thread. Executing as multiple code
+ * blocks could allow the platform UI system to interrupt and render a partial UI state.
  * </p>
  *
  * <p>To facilitate this, this module enqueues operations that are then applied to native view
@@ -54,7 +58,7 @@ import com.facebook.systrace.SystraceMessage;
  * <p>
  * <h2>== CSSNodes ==</h2>
  * In order to allow layout and measurement to occur on a non-UI thread, this module also
- * operates on intermediate CSSNode objects that correspond to a native view. These CSSNode are able
+ * operates on intermediate CSSNodeDEPRECATED objects that correspond to a native view. These CSSNodeDEPRECATED are able
  * to calculate layout according to their styling rules, and then the resulting x/y/width/height of
  * that layout is scheduled as an operation that will be applied to native view hierarchy at the end
  * of current batch.
@@ -64,42 +68,74 @@ import com.facebook.systrace.SystraceMessage;
  *                consider implementing a pool
  * TODO(5483063): Don't dispatch the view hierarchy at the end of a batch if no UI changes occurred
  */
+@ReactModule(name = UIManagerModule.NAME)
 public class UIManagerModule extends ReactContextBaseJavaModule implements
-    OnBatchCompleteListener, LifecycleEventListener {
+    OnBatchCompleteListener, LifecycleEventListener, PerformanceCounter {
 
-  // Keep in sync with ReactIOSTagHandles JS module - see that file for an explanation on why the
-  // increment here is 10
-  private static final int ROOT_VIEW_TAG_INCREMENT = 10;
+
+  /**
+   * Resolves a name coming from native side to a name of the event that is exposed to JS.
+   */
+  public interface CustomEventNamesResolver {
+    /**
+     * Returns custom event name by the provided event name.
+     */
+    @Nullable String resolveCustomEventName(String eventName);
+  }
+
+  protected static final String NAME = "UIManager";
+
+  private static final boolean DEBUG =
+      PrinterHolder.getPrinter().shouldDisplayLogMessage(ReactDebugOverlayTags.UI_MANAGER);
 
   private final EventDispatcher mEventDispatcher;
   private final Map<String, Object> mModuleConstants;
   private final UIImplementation mUIImplementation;
+  private final MemoryTrimCallback mMemoryTrimCallback = new MemoryTrimCallback();
 
-  private int mNextRootViewTag = 1;
   private int mBatchId = 0;
 
   public UIManagerModule(
       ReactApplicationContext reactContext,
       List<ViewManager> viewManagerList,
-      UIImplementation uiImplementation) {
+      UIImplementationProvider uiImplementationProvider,
+      boolean lazyViewManagersEnabled,
+      int minTimeLeftInFrameForNonBatchedOperationMs) {
     super(reactContext);
+    DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(reactContext);
     mEventDispatcher = new EventDispatcher(reactContext);
-    DisplayMetrics displayMetrics = reactContext.getResources().getDisplayMetrics();
-    DisplayMetricsHolder.setDisplayMetrics(displayMetrics);
-    mModuleConstants = createConstants(displayMetrics, viewManagerList);
-    mUIImplementation = uiImplementation;
+    mModuleConstants = createConstants(viewManagerList, lazyViewManagersEnabled);
+    mUIImplementation =
+        uiImplementationProvider.createUIImplementation(
+            reactContext,
+            viewManagerList,
+            mEventDispatcher,
+            minTimeLeftInFrameForNonBatchedOperationMs);
 
     reactContext.addLifecycleEventListener(this);
   }
 
+  /**
+   * This method gives an access to the {@link UIImplementation} object that can be used to execute
+   * operations on the view hierarchy.
+   */
+  public UIImplementation getUIImplementation() {
+    return mUIImplementation;
+  }
+
   @Override
   public String getName() {
-    return "RKUIManager";
+    return NAME;
   }
 
   @Override
   public Map<String, Object> getConstants() {
     return mModuleConstants;
+  }
+
+  @Override
+  public void initialize() {
+    getReactApplicationContext().registerComponentCallbacks(mMemoryTrimCallback);
   }
 
   @Override
@@ -121,69 +157,89 @@ public class UIManagerModule extends ReactContextBaseJavaModule implements
   public void onCatalystInstanceDestroy() {
     super.onCatalystInstanceDestroy();
     mEventDispatcher.onCatalystInstanceDestroyed();
+
+    getReactApplicationContext().unregisterComponentCallbacks(mMemoryTrimCallback);
+    YogaNodePool.get().clear();
+    ViewManagerPropertyUpdater.clear();
   }
 
   private static Map<String, Object> createConstants(
-      DisplayMetrics displayMetrics,
-      List<ViewManager> viewManagerList) {
+    List<ViewManager> viewManagerList,
+    boolean lazyViewManagersEnabled) {
+    ReactMarker.logMarker(CREATE_UI_MANAGER_MODULE_CONSTANTS_START);
     Systrace.beginSection(Systrace.TRACE_TAG_REACT_JAVA_BRIDGE, "CreateUIManagerConstants");
     try {
       return UIManagerModuleConstantsHelper.createConstants(
-          displayMetrics,
-          viewManagerList);
+        viewManagerList,
+        lazyViewManagersEnabled);
     } finally {
       Systrace.endSection(Systrace.TRACE_TAG_REACT_JAVA_BRIDGE);
+      ReactMarker.logMarker(CREATE_UI_MANAGER_MODULE_CONSTANTS_END);
     }
+  }
+
+  /**
+   * Resolves Direct Event name exposed to JS from the one known to the Native side.
+   */
+  public CustomEventNamesResolver getDirectEventNamesResolver() {
+    return new CustomEventNamesResolver() {
+      @Override
+      public @Nullable String resolveCustomEventName(String eventName) {
+        Map<String, Map> directEventTypes =
+            (Map<String, Map>) getConstants().get(
+                UIManagerModuleConstantsHelper.CUSTOM_DIRECT_EVENT_TYPES_KEY);
+        if (directEventTypes != null) {
+          Map<String, String> customEventType = (Map<String, String>) directEventTypes.get(eventName);
+          if (customEventType != null) {
+            return customEventType.get("registrationName");
+          }
+        }
+        return eventName;
+      }
+    };
+  }
+
+  @Override
+  public Map<String, Long> getPerformanceCounters() {
+    return mUIImplementation.getProfiledBatchPerfCounters();
   }
 
   /**
    * Registers a new root view. JS can use the returned tag with manageChildren to add/remove
    * children to this view.
    *
-   * Note that this must be called after getWidth()/getHeight() actually return something. See
+   * <p>Note that this must be called after getWidth()/getHeight() actually return something. See
    * CatalystApplicationFragment as an example.
    *
-   * TODO(6242243): Make addMeasuredRootView thread safe
-   * NB: this method is horribly not-thread-safe, the only reason it works right now is because
-   * it's called exactly once and is called before any JS calls are made. As soon as that fact no
-   * longer holds, this method will need to be fixed.
+   * <p>TODO(6242243): Make addRootView thread safe NB: this method is horribly not-thread-safe.
    */
-  public int addMeasuredRootView(final SizeMonitoringFrameLayout rootView) {
-    final int tag = mNextRootViewTag;
-    mNextRootViewTag += ROOT_VIEW_TAG_INCREMENT;
-
-    final int width;
-    final int height;
-    // If LayoutParams sets size explicitly, we can use that. Otherwise get the size from the view.
-    if (rootView.getLayoutParams() != null &&
-        rootView.getLayoutParams().width > 0 &&
-        rootView.getLayoutParams().height > 0) {
-      width = rootView.getLayoutParams().width;
-      height = rootView.getLayoutParams().height;
-    } else {
-      width = rootView.getWidth();
-      height = rootView.getHeight();
-    }
-
+  public <T extends SizeMonitoringFrameLayout & MeasureSpecProvider> int addRootView(
+      final T rootView) {
+    Systrace.beginSection(
+      Systrace.TRACE_TAG_REACT_JAVA_BRIDGE,
+      "UIManagerModule.addRootView");
+    final int tag = ReactRootViewTagGenerator.getNextRootViewTag();
+    final ReactApplicationContext reactApplicationContext = getReactApplicationContext();
     final ThemedReactContext themedRootContext =
-        new ThemedReactContext(getReactApplicationContext(), rootView.getContext());
+      new ThemedReactContext(reactApplicationContext, rootView.getContext());
 
-    mUIImplementation.registerRootView(rootView, tag, width, height, themedRootContext);
+    mUIImplementation.registerRootView(rootView, tag, themedRootContext);
 
     rootView.setOnSizeChangedListener(
-        new SizeMonitoringFrameLayout.OnSizeChangedListener() {
-          @Override
-          public void onSizeChanged(final int width, final int height, int oldW, int oldH) {
-            getReactApplicationContext().runOnNativeModulesQueueThread(
-                new Runnable() {
-                  @Override
-                  public void run() {
-                    updateRootNodeSize(tag, width, height);
-                  }
-                });
-          }
-        });
+      new SizeMonitoringFrameLayout.OnSizeChangedListener() {
+        @Override
+        public void onSizeChanged(final int width, final int height, int oldW, int oldH) {
+          reactApplicationContext.runUIBackgroundRunnable(
+            new GuardedRunnable(reactApplicationContext) {
+              @Override
+              public void runGuarded() {
+                updateNodeSize(tag, width, height);
+              }
+            });
+        }
+      });
 
+    Systrace.endSection(Systrace.TRACE_TAG_REACT_JAVA_BRIDGE);
     return tag;
   }
 
@@ -192,19 +248,31 @@ public class UIManagerModule extends ReactContextBaseJavaModule implements
     mUIImplementation.removeRootView(rootViewTag);
   }
 
-  private void updateRootNodeSize(int rootViewTag, int newWidth, int newHeight) {
-    getReactApplicationContext().assertOnNativeModulesQueueThread();
+  public void updateNodeSize(int nodeViewTag, int newWidth, int newHeight) {
+    getReactApplicationContext().assertOnUIBackgroundOrNativeModulesThread();
 
-    mUIImplementation.updateRootNodeSize(rootViewTag, newWidth, newHeight, mEventDispatcher);
+    mUIImplementation.updateNodeSize(nodeViewTag, newWidth, newHeight);
   }
 
   @ReactMethod
   public void createView(int tag, String className, int rootViewTag, ReadableMap props) {
+    if (DEBUG) {
+      String message =
+          "(UIManager.createView) tag: " + tag + ", class: " + className + ", props: " + props;
+      FLog.d(ReactConstants.TAG, message);
+      PrinterHolder.getPrinter().logMessage(ReactDebugOverlayTags.UI_MANAGER, message);
+    }
     mUIImplementation.createView(tag, className, rootViewTag, props);
   }
 
   @ReactMethod
   public void updateView(int tag, String className, ReadableMap props) {
+    if (DEBUG) {
+      String message =
+          "(UIManager.updateView) tag: " + tag + ", class: " + className + ", props: " + props;
+      FLog.d(ReactConstants.TAG, message);
+      PrinterHolder.getPrinter().logMessage(ReactDebugOverlayTags.UI_MANAGER, message);
+    }
     mUIImplementation.updateView(tag, className, props);
   }
 
@@ -227,6 +295,23 @@ public class UIManagerModule extends ReactContextBaseJavaModule implements
       @Nullable ReadableArray addChildTags,
       @Nullable ReadableArray addAtIndices,
       @Nullable ReadableArray removeFrom) {
+    if (DEBUG) {
+      String message =
+          "(UIManager.manageChildren) tag: "
+              + viewTag
+              + ", moveFrom: "
+              + moveFrom
+              + ", moveTo: "
+              + moveTo
+              + ", addTags: "
+              + addChildTags
+              + ", atIndices: "
+              + addAtIndices
+              + ", removeFrom: "
+              + removeFrom;
+      FLog.d(ReactConstants.TAG, message);
+      PrinterHolder.getPrinter().logMessage(ReactDebugOverlayTags.UI_MANAGER, message);
+    }
     mUIImplementation.manageChildren(
         viewTag,
         moveFrom,
@@ -234,6 +319,25 @@ public class UIManagerModule extends ReactContextBaseJavaModule implements
         addChildTags,
         addAtIndices,
         removeFrom);
+  }
+
+  /**
+   * Interface for fast tracking the initial adding of views.  Children view tags are assumed to be
+   * in order
+   *
+   * @param viewTag the view tag of the parent view
+   * @param childrenTags An array of tags to add to the parent in order
+   */
+  @ReactMethod
+  public void setChildren(
+    int viewTag,
+    ReadableArray childrenTags) {
+    if (DEBUG) {
+      String message = "(UIManager.setChildren) tag: " + viewTag + ", children: " + childrenTags;
+      FLog.d(ReactConstants.TAG, message);
+      PrinterHolder.getPrinter().logMessage(ReactDebugOverlayTags.UI_MANAGER, message);
+    }
+    mUIImplementation.setChildren(viewTag, childrenTags);
   }
 
   /**
@@ -264,6 +368,16 @@ public class UIManagerModule extends ReactContextBaseJavaModule implements
   @ReactMethod
   public void measure(int reactTag, Callback callback) {
     mUIImplementation.measure(reactTag, callback);
+  }
+
+  /**
+   * Determines the location on screen, width, and height of the given view relative to the device
+   * screen and returns the values via an async callback.  This is the absolute position including
+   * things like the status bar
+   */
+  @ReactMethod
+  public void measureInWindow(int reactTag, Callback callback) {
+    mUIImplementation.measureInWindow(reactTag, callback);
   }
 
   /**
@@ -317,10 +431,21 @@ public class UIManagerModule extends ReactContextBaseJavaModule implements
       final ReadableArray point,
       final Callback callback) {
     mUIImplementation.findSubviewIn(
-        reactTag,
-        Math.round(PixelUtil.toPixelFromDIP(point.getDouble(0))),
-        Math.round(PixelUtil.toPixelFromDIP(point.getDouble(1))),
-        callback);
+      reactTag,
+      Math.round(PixelUtil.toPixelFromDIP(point.getDouble(0))),
+      Math.round(PixelUtil.toPixelFromDIP(point.getDouble(1))),
+      callback);
+  }
+
+  /**
+   *  Check if the first shadow node is the descendant of the second shadow node
+   */
+  @ReactMethod
+  public void viewIsDescendantOf(
+      final int reactTag,
+      final int ancestorReactTag,
+      final Callback callback) {
+    mUIImplementation.viewIsDescendantOf(reactTag, ancestorReactTag, callback);
   }
 
   /**
@@ -433,7 +558,7 @@ public class UIManagerModule extends ReactContextBaseJavaModule implements
           .arg("BatchId", batchId)
           .flush();
     try {
-      mUIImplementation.dispatchViewUpdates(mEventDispatcher, batchId);
+      mUIImplementation.dispatchViewUpdates(batchId);
     } finally {
       Systrace.endSection(Systrace.TRACE_TAG_REACT_JAVA_BRIDGE);
     }
@@ -451,5 +576,78 @@ public class UIManagerModule extends ReactContextBaseJavaModule implements
   @ReactMethod
   public void sendAccessibilityEvent(int tag, int eventType) {
     mUIImplementation.sendAccessibilityEvent(tag, eventType);
+  }
+
+  /**
+   * Schedule a block to be executed on the UI thread. Useful if you need to execute
+   * view logic after all currently queued view updates have completed.
+   *
+   * @param block that contains UI logic you want to execute.
+   *
+   * Usage Example:
+
+   UIManagerModule uiManager = reactContext.getNativeModule(UIManagerModule.class);
+   uiManager.addUIBlock(new UIBlock() {
+     public void execute (NativeViewHierarchyManager nvhm) {
+       View view = nvhm.resolveView(tag);
+       // ...execute your code on View (e.g. snapshot the view)
+     }
+   });
+     */
+  public void addUIBlock (UIBlock block) {
+    mUIImplementation.addUIBlock(block);
+  }
+
+  /**
+   * Given a reactTag from a component, find its root node tag, if possible.
+   * Otherwise, this will return 0. If the reactTag belongs to a root node, this
+   * will return the same reactTag.
+   *
+   * @param reactTag the component tag
+   *
+   * @return the rootTag
+   */
+  public int resolveRootTagFromReactTag(int reactTag) {
+    return mUIImplementation.resolveRootTagFromReactTag(reactTag);
+  }
+
+  /** Dirties the node associated with the given react tag */
+  public void invalidateNodeLayout(int tag) {
+    ReactShadowNode node = mUIImplementation.resolveShadowNode(tag);
+    if (node == null) {
+      FLog.w(
+          ReactConstants.TAG,
+          "Warning : attempted to dirty a non-existent react shadow node. reactTag=" + tag);
+      return;
+    }
+    node.dirty();
+  }
+
+  /**
+   * Updates the styles of the {@link ReactShadowNode} based on the Measure specs received by
+   * parameters.
+   */
+  public void updateRootLayoutSpecs(int rootViewTag, int widthMeasureSpec, int heightMeasureSpec) {
+    mUIImplementation.updateRootView(rootViewTag, widthMeasureSpec, heightMeasureSpec);
+    mUIImplementation.dispatchViewUpdates(-1);
+  }
+
+  /** Listener that drops the CSSNode pool on low memory when the app is backgrounded. */
+  private class MemoryTrimCallback implements ComponentCallbacks2 {
+
+    @Override
+    public void onTrimMemory(int level) {
+      if (level >= TRIM_MEMORY_MODERATE) {
+        YogaNodePool.get().clear();
+      }
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+    }
+
+    @Override
+    public void onLowMemory() {
+    }
   }
 }

@@ -9,29 +9,26 @@
 
 package com.facebook.react.uimanager;
 
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
+import static org.fest.assertions.api.Assertions.assertThat;
+import static org.fest.assertions.api.Assertions.fail;
 
 import android.view.View;
-
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReadableArray;
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.common.MapBuilder;
 import com.facebook.react.uimanager.annotations.ReactProp;
 import com.facebook.react.uimanager.annotations.ReactPropGroup;
-
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
-import org.robolectric.RuntimeEnvironment;
 import org.powermock.core.classloader.annotations.PowerMockIgnore;
 import org.powermock.modules.junit4.rule.PowerMockRule;
-
-import static org.fest.assertions.api.Assertions.assertThat;
-import static org.fest.assertions.api.Assertions.fail;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.RuntimeEnvironment;
 
 /**
  * Verifies that prop constants are generated properly based on {@code ReactProp} annotation.
@@ -145,10 +142,8 @@ public class ReactPropConstantsTest {
   public void testNativePropsIncludeCorrectTypes() {
     List<ViewManager> viewManagers = Arrays.<ViewManager>asList(new ViewManagerUnderTest());
     ReactApplicationContext reactContext = new ReactApplicationContext(RuntimeEnvironment.application);
-    UIManagerModule uiManagerModule = new UIManagerModule(
-        reactContext,
-        viewManagers,
-        new UIImplementation(reactContext, viewManagers));
+    UIManagerModule uiManagerModule =
+        new UIManagerModule(reactContext, viewManagers, new UIImplementationProvider(), false, 0);
     Map<String, String> constants =
         (Map) valueAtPath(uiManagerModule.getConstants(), "SomeView", "NativeProps");
     assertThat(constants).isEqualTo(
