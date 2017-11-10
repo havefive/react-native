@@ -12,6 +12,7 @@
  */
 'use strict';
 
+const Platform = require('Platform');
 const ReactNativeBridgeEventPlugin = require('ReactNativeBridgeEventPlugin');
 const ReactNativeStyleAttributes = require('ReactNativeStyleAttributes');
 const UIManager = require('UIManager');
@@ -47,11 +48,61 @@ const warning = require('fbjs/lib/warning');
  */
 import type {ComponentInterface} from 'verifyPropTypes';
 
+let hasAttachedDefaultEventTypes: boolean = false;
+
 function requireNativeComponent(
   viewName: string,
   componentInterface?: ?ComponentInterface,
   extraConfig?: ?{nativeOnly?: Object},
 ): React$ComponentType<any> | string {
+  function attachDefaultEventTypes(viewConfig: any) {
+    if (Platform.OS === 'android') {
+      // This is supported on Android platform only,
+      // as lazy view managers discovery is Android-specific.
+      if (UIManager.ViewManagerNames) {
+        // Lazy view managers enabled.
+        viewConfig = merge(viewConfig, UIManager.getDefaultEventTypes());
+      } else {
+        viewConfig.bubblingEventTypes = merge(
+          viewConfig.bubblingEventTypes,
+          UIManager.genericBubblingEventTypes,
+        );
+        viewConfig.directEventTypes = merge(
+          viewConfig.directEventTypes,
+          UIManager.genericDirectEventTypes,
+        );
+      }
+    }
+  }
+
+  function merge(destination: ?Object, source: ?Object): ?Object {
+    if (!source) {
+      return destination;
+    }
+    if (!destination) {
+      return source;
+    }
+
+    for (const key in source) {
+      if (!source.hasOwnProperty(key)) {
+        continue;
+      }
+
+      var sourceValue = source[key];
+      if (destination.hasOwnProperty(key)) {
+        const destinationValue = destination[key];
+        if (
+          typeof sourceValue === 'object' &&
+          typeof destinationValue === 'object'
+        ) {
+          sourceValue = merge(destinationValue, sourceValue);
+        }
+      }
+      destination[key] = sourceValue;
+    }
+    return destination;
+  }
+
   // Don't load the ViewConfig from UIManager until it's needed for rendering.
   // Lazy-loading this can help avoid Prepack deopts.
   function getViewConfig() {
@@ -127,6 +178,11 @@ function requireNativeComponent(
           viewConfig,
           extraConfig && extraConfig.nativeOnly,
         );
+    }
+
+    if (!hasAttachedDefaultEventTypes) {
+      attachDefaultEventTypes(viewConfig);
+      hasAttachedDefaultEventTypes = true;
     }
 
     // Register this view's event types with the ReactNative renderer.

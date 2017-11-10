@@ -30,6 +30,12 @@ RCT_EXTERN NSString *const RCTUIManagerWillUpdateViewsDueToContentSizeMultiplier
 @interface RCTUIManager : NSObject <RCTBridgeModule, RCTInvalidating>
 
 /**
+ * Register a root view tag and creates corresponding `rootView` and
+ * `rootShadowView`.
+ */
+- (void)registerRootViewTag:(NSNumber *)rootTag;
+
+/**
  * Register a root view with the RCTUIManager.
  */
 - (void)registerRootView:(UIView *)rootView;
@@ -165,26 +171,6 @@ RCT_EXTERN NSString *const RCTUIManagerWillUpdateViewsDueToContentSizeMultiplier
  * See `RCTUIManagerObserver` protocol for more details.
  */
 @property (atomic, retain, readonly) RCTUIManagerObserverCoordinator *observerCoordinator;
-
-@end
-
-@interface RCTUIManager (Deprecated)
-
-/**
- * This method is deprecated and will be removed in next releases.
- * Use `setSize:forView:` or `setIntrinsicContentSize:forView:` instead.
- * Only frames with `origin` equals {0, 0} are supported.
- */
-- (void)setFrame:(CGRect)frame forView:(UIView *)view
-__deprecated_msg("Use `setSize:forView:` or `setIntrinsicContentSize:forView:` instead.");
-
-
-/**
- * This method is deprecated and will be removed in next releases.
- * Use `registerRootView:` instead. There is no need to specify `sizeFlexibility` anymore.
- */
-- (void)registerRootView:(UIView *)rootView withSizeFlexibility:(RCTRootViewSizeFlexibility)sizeFlexibility
-__deprecated_msg("Use `registerRootView:` instead.");
 
 @end
 

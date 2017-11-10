@@ -46,6 +46,7 @@ const ReactNative = {
   get Switch() { return require('Switch'); },
   get RefreshControl() { return require('RefreshControl'); },
   get StatusBar() { return require('StatusBar'); },
+  get SwipeableFlatList() { return require('SwipeableFlatList'); },
   get SwipeableListView() { return require('SwipeableListView'); },
   get TabBarIOS() { return require('TabBarIOS'); },
   get Text() { return require('Text'); },
@@ -102,6 +103,7 @@ const ReactNative = {
   get unstable_batchedUpdates() { return require('ReactNative').unstable_batchedUpdates; },
   get Vibration() { return require('Vibration'); },
   get VibrationIOS() { return require('VibrationIOS'); },
+  get YellowBox() { return require('YellowBox'); },
 
   // Plugins
   get DeviceEventEmitter() { return require('RCTDeviceEventEmitter'); },
