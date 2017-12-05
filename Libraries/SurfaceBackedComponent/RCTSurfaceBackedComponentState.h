@@ -7,20 +7,14 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  */
 
-#import "RCTPackagerConnectionConfig.h"
+#import <UIKit/UIKit.h>
 
-#if RCT_DEV // Only supported in dev mode
+@class RCTSurface;
 
-NS_ASSUME_NONNULL_BEGIN
+@interface RCTSurfaceBackedComponentState: NSObject
 
-@class RCTBridge;
+@property (atomic, readonly, strong) RCTSurface *surface;
 
-@interface RCTPackagerConnectionBridgeConfig : NSObject <RCTPackagerConnectionConfig>
-
-- (instancetype)initWithBridge:(RCTBridge *)bridge;
++ (instancetype)newWithSurface:(RCTSurface *)surface;
 
 @end
-
-NS_ASSUME_NONNULL_END
-
-#endif

@@ -7,16 +7,8 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  */
 
-#import <React/RCTPackagerClient.h>
+#import <ComponentKit/CKComponentController.h>
 
-@protocol RCTJSEnvironment;
-
-#if RCT_DEV // Only supported in dev mode
-
-@interface RCTSamplingProfilerPackagerMethod : NSObject <RCTPackagerClientMethod>
-
-- (instancetype)initWithJSEnvironment:(id<RCTJSEnvironment>)jsEnvironment;
+@interface RCTSurfaceHostingComponentController : CKComponentController
 
 @end
-
-#endif
